@@ -152,4 +152,4 @@ The agent should not run the swap loop faster than the monitor runs — if monit
 5. If a build returns an `idempotency_key` you've seen before in this session, the tx is already broadcast — don't sign again.
 6. Never deposit into this wallet from an external source during the event — it voids ROI eligibility.
 7. Only swap whitelisted assets. Non-whitelisted swaps don't count.
-8. Do NOT route Mantle txs through the Byreal / Privy agent-signer proxy at this time — it hardcodes a gas price below Mantle's base fee. Sign locally. See [references/signing.md](references/signing.md) for the pattern.
+8. Pick a signer and stick with it per session: either (a) local signing with a private key (viem / web3.py) or (b) the Byreal RealClaw agent-token proxy. Both work. If using the Byreal proxy, you MUST explicitly override `nonce`, `gas`, `maxFeePerGas`, and `maxPriorityFeePerGas` on every request — the proxy's auto-fill stamps stale values that fail at the sequencer. See [references/signing.md](references/signing.md) for full patterns.

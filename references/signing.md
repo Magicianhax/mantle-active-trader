@@ -121,6 +121,69 @@ const rcpt = await pub.waitForTransactionReceipt({ hash, timeout: 180_000 })
 if (rcpt.status !== 'success') throw new Error(`tx reverted: ${hash}`)
 ```
 
+## Pattern (Byreal RealClaw agent-token proxy)
+
+Use this when the agent's key is custodied by Byreal/Privy and you can't sign locally. The proxy will sign and broadcast, but **only if you override every chain-dependent field explicitly** — without overrides, it stamps stale defaults that fail at the sequencer.
+
+```
+POST https://api2.byreal.io/byreal/api/privy-proxy/v1/evm/sign-evm-transaction
+Authorization: Bearer <agent-token>
+Content-Type: application/json
+
+{
+  "caip2": "eip155:5000",
+  "transaction": {
+    "to":                   "<unsigned_tx.to>",
+    "data":                 "<unsigned_tx.data>",
+    "value":                "<unsigned_tx.value>",
+    "chainId":              5000,
+
+    "nonce":                <int from eth_getTransactionCount(addr,"pending")>,
+    "gas":                  <int: eth_estimateGas * 1.5>,
+    "maxFeePerGas":         <int: eth_gasPrice * 2>,
+    "maxPriorityFeePerGas": <int: eth_gasPrice>
+  },
+  "broadcast": true
+}
+```
+
+**All five added fields must be integers** (not strings, not hex). If you omit any of them, the proxy fills in its own stale defaults and the tx will fail — either with `nonce too low` or `max fee per gas less than block base fee`. Verified live: the proxy respects every one of these overrides when present.
+
+Minimal Python version using `requests`:
+
+```python
+import requests
+
+nonce = int(rpc_call("eth_getTransactionCount", [wallet, "pending"]), 16)
+gas_price = int(rpc_call("eth_gasPrice", []), 16)
+gas_est = int(rpc_call("eth_estimateGas", [{
+    "from": wallet,
+    "to": unsigned_tx["to"],
+    "data": unsigned_tx["data"],
+    "value": unsigned_tx.get("value", "0x0"),
+}]), 16)
+
+body = {
+    "caip2": "eip155:5000",
+    "transaction": {
+        **unsigned_tx,
+        "nonce": nonce,
+        "gas": int(gas_est * 1.5),
+        "maxFeePerGas": gas_price * 2,
+        "maxPriorityFeePerGas": gas_price,
+    },
+    "broadcast": True,
+}
+r = requests.post(
+    "https://api2.byreal.io/byreal/api/privy-proxy/v1/evm/sign-evm-transaction",
+    headers={"Authorization": f"Bearer {agent_token}"},
+    json=body, timeout=60,
+)
+tx_hash = r.json()["hash"]  # then poll receipt via mantle-cli chain tx
+```
+
+Wait for receipt with `mantle-cli chain tx --hash <tx_hash> --json`. Do NOT rebuild the transaction if the POST times out — check the receipt first; the tx may already be mined under that nonce.
+
 ## RPC endpoint
 
 Default: `https://rpc.mantle.xyz` (official, public). Has rate limits — backoff on 429. For sustained activity, use an authenticated endpoint (Ankr, QuickNode, Infura-Mantle) and set via env var or config.
@@ -135,7 +198,7 @@ Default: `https://rpc.mantle.xyz` (official, public). Has rate limits — backof
 
 4. **Gas price must match current network conditions.** Hardcoded gas constants fail when base fee moves. Always read `eth_gasPrice` fresh and add a small buffer (10–20%).
 
-5. **Do not use the RealClaw agent-signer proxy** (e.g., `api2.byreal.io/byreal/api/privy-proxy/v1/sign/evm-transaction`) for Mantle transactions at this time — it hardcodes a stale gas price below the current base fee, causing every sign attempt to produce an untransmittable tx. Sign locally with a private key held by your agent's own signer, or use your wallet's native Mantle path.
+5. **When using the Byreal RealClaw agent-token proxy, always override `nonce`, `gas`, `maxFeePerGas`, and `maxPriorityFeePerGas` in the request body.** If you omit any of them, the proxy stamps stale defaults (nonce from a desynced tracker, gas price below Mantle's base fee) and every tx fails at the sequencer. With all four overrides present, the proxy signs and broadcasts correctly — verified live on Mantle mainnet. Prefer local signing when a private key is available (fewer moving parts, no cache issues).
 
 6. **Store the idempotency key** returned by every build response. Pass it to `scripts/state.py record-cycle --idempotency-key <k>`. If the same key appears twice in one session, the tx is already broadcast — do NOT sign it again.
 
