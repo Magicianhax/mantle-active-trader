@@ -137,6 +137,7 @@ The agent should not run the swap loop faster than the monitor runs — if monit
 
 ## Reference Files
 
+- [references/signing.md](references/signing.md) — how to sign and broadcast the unsigned transactions `mantle-cli` returns. Read before writing any executor code; covers nonce, gas price, gas limit, retries, and language-specific patterns (Python/web3.py, Node/viem).
 - [references/pairs.md](references/pairs.md) — all whitelisted pairs with routers, fee tiers, and bin steps. Read before first swap.
 - [references/failures.md](references/failures.md) — recovery playbook for common Mantle failure modes. Read when a tx fails or a quote looks wrong.
 - [scripts/monitor.py](scripts/monitor.py) — state monitor (invoke on cron).
@@ -144,10 +145,11 @@ The agent should not run the swap loop faster than the monitor runs — if monit
 
 ## Hard Rules
 
-1. Use `mantle-cli ... --json` for every on-chain op. Never hand-encode calldata.
+1. Use `mantle-cli ... --json` for every on-chain **build**. Never hand-encode calldata. Sign and broadcast the returned `unsigned_tx` per [references/signing.md](references/signing.md) — the CLI does not sign.
 2. Sign and wait for receipt between txs. No pipelining, no parallel.
 3. Always pass `--amount-out-min` from a fresh quote's `minimum_out_raw`. Never pass `--amount-out-min 0` — that disables slippage protection.
 4. One approve per `(token × router)` pair at `max`. Never re-approve.
 5. If a build returns an `idempotency_key` you've seen before in this session, the tx is already broadcast — don't sign again.
 6. Never deposit into this wallet from an external source during the event — it voids ROI eligibility.
 7. Only swap whitelisted assets. Non-whitelisted swaps don't count.
+8. Do NOT route Mantle txs through the Byreal / Privy agent-signer proxy at this time — it hardcodes a gas price below Mantle's base fee. Sign locally. See [references/signing.md](references/signing.md) for the pattern.
